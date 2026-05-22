@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+
+import numpy as np
+
+from tactigrip.sensors.tactile import SurfaceProfile, TactileReading, TactileSensorModel
+
+
+@dataclass(frozen=True)
+class ObjectProfile:
+    name: str
+    width_m: float
+    mass_kg: float
+    friction: float
+    crush_force_n: float
+    crush_time_s: float
+    stiffness_n_m: float
+    surface: SurfaceProfile
+
+
+@dataclass(frozen=True)
+class SimConfig:
+    dt: float = 0.01
+    max_time_s: float = 5.0
+    max_gap_m: float = 0.085
+    min_gap_m: float = 0.01
+    max_close_speed_m_s: float = 0.045
+    jaw_response_hz: float = 18.0
+    contact_damping_n_s_m: float = 25.0
+    slip_damping_n_s_m: float = 45.0
+    lift_start_s: float = 0.8
+    lift_speed_m_s: float = 0.18
+    success_lift_m: float = 0.45
+    required_hold_s: float = 1.0
+    drop_slip_m: float = 0.03
+    gravity_m_s2: float = 9.81
+    force_penalty_scale: float = 0.015
+    slip_penalty_scale: float = 8.0
+
+
+@dataclass
+class GripperState:
+    time_s: float
+    jaw_gap_m: float
+    jaw_velocity_m_s: float
+    lift_height_m: float
+    object_height_m: float
+    slip_distance_m: float
+    crushed_time_s: float
+    hold_time_s: float
+
+
+@dataclass(frozen=True)
+class ContactState:
+    in_contact: bool
+    normal_force_n: float
+    shear_force_n: float
+    slip_velocity_m_s: float
+    available_friction_n: float
+    required_friction_n: float
+    compression_m: float
+
+
+@dataclass(frozen=True)
+class StepResult:
+    state: GripperState
+    contact: ContactState
+    tactile: TactileReading
+    reward: float
+    terminated: bool
+    truncated: bool
+    info: dict[str, float | bool | str]
+
+
+def default_objects() -> dict[str, ObjectProfile]:
+    return {
+        "fragile_foam": ObjectProfile(
+            name="fragile_foam",
+            width_m=0.052,
+            mass_kg=0.12,
+            friction=0.75,
+            crush_force_n=5.0,
+            crush_time_s=0.10,
+            stiffness_n_m=2600.0,
+            surface=SurfaceProfile(
+                material="foam",
+                roughness=0.45,
+                temperature_c=25.0,
+                thermal_response=0.35,
+            ),
+        ),
+        "slippery_plastic": ObjectProfile(
+            name="slippery_plastic",
+            width_m=0.050,
+            mass_kg=0.16,
+            friction=0.35,
+            crush_force_n=8.0,
+            crush_time_s=0.15,
+            stiffness_n_m=4200.0,
+            surface=SurfaceProfile(
+                material="plastic",
+                roughness=0.30,
+                temperature_c=23.0,
+                thermal_response=0.20,
+            ),
+        ),
+        "cool_metal": ObjectProfile(
+            name="cool_metal",
+            width_m=0.048,
+            mass_kg=0.24,
+            friction=0.50,
+            crush_force_n=18.0,
+            crush_time_s=0.25,
+            stiffness_n_m=9000.0,
+            surface=SurfaceProfile(
+                material="metal",
+                roughness=0.20,
+                temperature_c=18.0,
+                thermal_response=0.75,
+            ),
+        ),
+    }
+
+
+class FragileGraspSim:
+    """Small deterministic gripper/contact simulator with synthetic tactile readings.
+
+    The model is intentionally compact: MuJoCo/Isaac can replace the dynamics later,
+    while the task contract, sensor assumptions, and benchmark metrics stay stable.
+    """
+
+    def __init__(
+        self,
+        config: SimConfig | None = None,
+        sensor_model: TactileSensorModel | None = None,
+    ) -> None:
+        self.config = config or SimConfig()
+        self.sensor_model = sensor_model or TactileSensorModel()
+        self.objects = default_objects()
+        self.object_profile = self.objects["fragile_foam"]
+        self.rng = np.random.default_rng()
+        self.state = self._initial_state()
+
+    def reset(
+        self,
+        seed: int | None = None,
+        object_name: str = "fragile_foam",
+        object_profile: ObjectProfile | None = None,
+    ) -> StepResult:
+        if seed is not None:
+            self.rng = np.random.default_rng(seed)
+        self.object_profile = object_profile or self.objects[object_name]
+        self.sensor_model.reset(self.rng)
+        self.state = self._initial_state()
+        contact = self._compute_contact(self.state)
+        tactile = self.sensor_model.read(contact, self.object_profile.surface, self.config.dt, self.rng)
+        return StepResult(
+            state=self.state,
+            contact=contact,
+            tactile=tactile,
+            reward=0.0,
+            terminated=False,
+            truncated=False,
+            info={"object": self.object_profile.name},
+        )
+
+    def step(self, action: float) -> StepResult:
+        cfg = self.config
+        action = float(np.clip(action, -1.0, 1.0))
+        commanded_close_speed = action * cfg.max_close_speed_m_s
+
+        jaw_velocity = self.state.jaw_velocity_m_s
+        response = np.clip(cfg.jaw_response_hz * cfg.dt, 0.0, 1.0)
+        jaw_velocity += response * (commanded_close_speed - jaw_velocity)
+
+        jaw_gap = self.state.jaw_gap_m - jaw_velocity * cfg.dt
+        jaw_gap = float(np.clip(jaw_gap, cfg.min_gap_m, cfg.max_gap_m))
+        if jaw_gap in (cfg.min_gap_m, cfg.max_gap_m):
+            jaw_velocity = 0.0
+
+        lift_height = self.state.lift_height_m
+        if self.state.time_s >= cfg.lift_start_s:
+            lift_height += cfg.lift_speed_m_s * cfg.dt
+
+        draft_state = replace(
+            self.state,
+            time_s=self.state.time_s + cfg.dt,
+            jaw_gap_m=jaw_gap,
+            jaw_velocity_m_s=jaw_velocity,
+            lift_height_m=lift_height,
+        )
+        contact = self._compute_contact(draft_state)
+
+        slip_distance = self.state.slip_distance_m + contact.slip_velocity_m_s * cfg.dt
+        object_height = max(0.0, lift_height - slip_distance)
+
+        crushed_time = self.state.crushed_time_s
+        if contact.normal_force_n > self.object_profile.crush_force_n:
+            crushed_time += cfg.dt
+        else:
+            crushed_time = max(0.0, crushed_time - 2.0 * cfg.dt)
+
+        lifted = object_height >= cfg.success_lift_m
+        stable = contact.slip_velocity_m_s < 0.002 and contact.in_contact
+        hold_time = self.state.hold_time_s + cfg.dt if lifted and stable else 0.0
+
+        state = replace(
+            draft_state,
+            object_height_m=object_height,
+            slip_distance_m=slip_distance,
+            crushed_time_s=crushed_time,
+            hold_time_s=hold_time,
+        )
+        self.state = state
+
+        tactile = self.sensor_model.read(contact, self.object_profile.surface, cfg.dt, self.rng)
+        terminated, reason = self._termination_reason(state, contact)
+        truncated = state.time_s >= cfg.max_time_s and not terminated
+        reward = self._reward(state, contact, terminated, reason)
+
+        return StepResult(
+            state=state,
+            contact=contact,
+            tactile=tactile,
+            reward=reward,
+            terminated=terminated,
+            truncated=truncated,
+            info={
+                "object": self.object_profile.name,
+                "reason": reason,
+                "success": reason == "success",
+                "dropped": reason == "dropped",
+                "crushed": reason == "crushed",
+            },
+        )
+
+    def _initial_state(self) -> GripperState:
+        return GripperState(
+            time_s=0.0,
+            jaw_gap_m=self.config.max_gap_m,
+            jaw_velocity_m_s=0.0,
+            lift_height_m=0.0,
+            object_height_m=0.0,
+            slip_distance_m=0.0,
+            crushed_time_s=0.0,
+            hold_time_s=0.0,
+        )
+
+    def _compute_contact(self, state: GripperState) -> ContactState:
+        obj = self.object_profile
+        cfg = self.config
+        compression = max(0.0, obj.width_m - state.jaw_gap_m)
+        in_contact = compression > 0.0
+
+        closing_speed = max(0.0, state.jaw_velocity_m_s)
+        normal_force = 0.0
+        if in_contact:
+            normal_force = obj.stiffness_n_m * compression
+            normal_force += cfg.contact_damping_n_s_m * closing_speed
+
+        required_friction = obj.mass_kg * cfg.gravity_m_s2
+        available_friction = 2.0 * obj.friction * normal_force
+        slip_force = max(0.0, required_friction - available_friction)
+        slip_velocity = slip_force / cfg.slip_damping_n_s_m if in_contact else 0.0
+        shear_force = min(required_friction / 2.0, obj.friction * normal_force)
+
+        return ContactState(
+            in_contact=in_contact,
+            normal_force_n=float(normal_force),
+            shear_force_n=float(shear_force),
+            slip_velocity_m_s=float(slip_velocity),
+            available_friction_n=float(available_friction),
+            required_friction_n=float(required_friction),
+            compression_m=float(compression),
+        )
+
+    def _termination_reason(self, state: GripperState, contact: ContactState) -> tuple[bool, str]:
+        if state.crushed_time_s >= self.object_profile.crush_time_s:
+            return True, "crushed"
+        if contact.in_contact and state.slip_distance_m >= self.config.drop_slip_m:
+            return True, "dropped"
+        if state.hold_time_s >= self.config.required_hold_s:
+            return True, "success"
+        return False, "running"
+
+    def _reward(
+        self,
+        state: GripperState,
+        contact: ContactState,
+        terminated: bool,
+        reason: str,
+    ) -> float:
+        cfg = self.config
+        reward = 1.5 * state.object_height_m
+        reward += 0.02 if contact.in_contact else -0.03
+        reward -= cfg.force_penalty_scale * contact.normal_force_n
+        reward -= cfg.slip_penalty_scale * contact.slip_velocity_m_s
+
+        if contact.normal_force_n > self.object_profile.crush_force_n:
+            reward -= 0.25
+        if terminated:
+            if reason == "success":
+                reward += 20.0
+            elif reason == "dropped":
+                reward -= 15.0
+            elif reason == "crushed":
+                reward -= 18.0
+        return float(reward)
+
