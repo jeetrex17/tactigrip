@@ -31,6 +31,8 @@ uv run python scripts/validate_sensors.py
 uv run python scripts/evaluate_heuristic.py
 ```
 
+Pretrained PPO checkpoints are included in `models/` so the benchmark and Rerun demo can run after installing dependencies.
+
 For RL training:
 
 ```bash

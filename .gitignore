@@ -5,6 +5,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 runs/
-models/
+models/best_*/
 *.egg-info/
-
