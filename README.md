@@ -46,18 +46,18 @@ Run the policy ablation:
 uv run python scripts/benchmark_policies.py --episodes 120
 ```
 
-## Rerun Demo
+## Rerun Dashboard
 
-Clean gripper demo:
+The Rerun viewer opens with a dashboard layout: gripper scene on the left and telemetry plots on the right.
 
 ```bash
 uv run python scripts/visualize_rerun.py --policy models/ppo_full.zip --modalities full --object slippery_plastic --seed 5 --spawn
 ```
 
-Debug overlays:
+Debug overlays for sensor markers, force vectors, path guides, and the friction disturbance marker:
 
 ```bash
-uv run python scripts/visualize_rerun.py --policy models/ppo_full.zip --modalities full --object slippery_plastic --seed 5 --spawn --show-sensors --show-guides
+uv run python scripts/visualize_rerun.py --policy models/ppo_full.zip --modalities full --object slippery_plastic --seed 5 --spawn --show-sensors --show-forces --show-disturbance --show-guides
 ```
 
 ## Scope
