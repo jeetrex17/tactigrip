@@ -40,6 +40,7 @@ class SimConfig:
     disturbance_start_s: float | None = None
     disturbance_duration_s: float = 0.0
     disturbance_friction_scale: float = 1.0
+    disturbance_slip_penalty_scale: float = 30.0
 
 
 @dataclass
@@ -310,6 +311,9 @@ class FragileGraspSim:
             reward += 0.20
             reward += 0.10 * min(contact.normal_force_n / max(target_force, 1e-6), 1.0)
             reward -= 0.05 * force_error
+            safe_force = 0.80 * self.object_profile.crush_force_n
+            excess_safe_force = max(0.0, contact.normal_force_n - safe_force)
+            reward -= 0.35 * excess_safe_force * excess_safe_force
         else:
             closing_range = max(1e-6, cfg.max_gap_m - self.object_profile.width_m)
             approach = 1.0 - np.clip(
@@ -324,9 +328,20 @@ class FragileGraspSim:
 
         reward -= cfg.force_penalty_scale * contact.normal_force_n
         reward -= cfg.slip_penalty_scale * contact.slip_velocity_m_s
+        if self._disturbance_active(state.time_s) and contact.in_contact:
+            required = max(contact.required_friction_n, 1e-6)
+            friction_margin = (contact.available_friction_n - contact.required_friction_n) / required
+            crush_headroom = np.clip(
+                (self.object_profile.crush_force_n - contact.normal_force_n)
+                / max(0.20 * self.object_profile.crush_force_n, 1e-6),
+                0.0,
+                1.0,
+            )
+            reward += 0.15 * float(crush_headroom * np.clip(friction_margin, -1.0, 1.0))
+            reward -= cfg.disturbance_slip_penalty_scale * contact.slip_velocity_m_s
 
         if contact.normal_force_n > self.object_profile.crush_force_n:
-            reward -= 0.25
+            reward -= 1.0
         if terminated:
             if reason == "success":
                 reward += 20.0
@@ -342,10 +357,13 @@ class FragileGraspSim:
         return float(min(0.8 * obj.crush_force_n, 1.25 * needed + 0.20))
 
     def _effective_friction(self, time_s: float) -> float:
+        if self._disturbance_active(time_s):
+            return self.object_profile.friction * self.config.disturbance_friction_scale
+        return self.object_profile.friction
+
+    def _disturbance_active(self, time_s: float) -> bool:
         cfg = self.config
         if cfg.disturbance_start_s is None:
-            return self.object_profile.friction
+            return False
         disturbance_end = cfg.disturbance_start_s + cfg.disturbance_duration_s
-        if cfg.disturbance_start_s <= time_s <= disturbance_end:
-            return self.object_profile.friction * cfg.disturbance_friction_scale
-        return self.object_profile.friction
+        return cfg.disturbance_start_s <= time_s <= disturbance_end

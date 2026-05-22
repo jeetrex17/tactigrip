@@ -133,6 +133,7 @@ def summarize(stats: list[EpisodeStats]) -> dict[str, float]:
         "mean_force_n": float(np.mean([s.mean_force_n for s in stats])),
         "max_force_n": float(np.max([s.max_force_n for s in stats])),
         "avg_slip_duration_s": float(np.mean([s.avg_slip_duration_s for s in stats])),
+        "mean_peak_slip_velocity_m_s": float(np.mean([s.max_slip_velocity_m_s for s in stats])),
+        "max_peak_slip_velocity_m_s": float(np.max([s.max_slip_velocity_m_s for s in stats])),
         "mean_reward": float(np.mean([s.reward for s in stats])),
     }
-

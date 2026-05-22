@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover
     FragileGraspEnv = None
 
 from tactigrip.policies import HeuristicGripController, run_episode
-from tactigrip.sim.gripper import FragileGraspSim, SimConfig
+from tactigrip.sim.gripper import ContactState, FragileGraspSim, GripperState, SimConfig
 
 
 class FragileGraspSimTest(unittest.TestCase):
@@ -70,6 +70,39 @@ class FragileGraspSimTest(unittest.TestCase):
         self.assertTrue(result.contact.in_contact)
         self.assertGreater(result.reward, no_contact.reward)
 
+    def test_disturbance_reward_penalizes_slip_recovery(self) -> None:
+        state = GripperState(
+            time_s=0.75,
+            jaw_gap_m=0.051,
+            jaw_velocity_m_s=0.0,
+            lift_height_m=0.2,
+            object_height_m=0.1,
+            slip_distance_m=0.0,
+            crushed_time_s=0.0,
+            hold_time_s=0.0,
+        )
+        contact = ContactState(
+            in_contact=True,
+            normal_force_n=0.4,
+            shear_force_n=0.1,
+            slip_velocity_m_s=0.02,
+            available_friction_n=0.2,
+            required_friction_n=1.0,
+            compression_m=0.001,
+        )
+        base_cfg = dict(
+            disturbance_start_s=0.5,
+            disturbance_duration_s=1.0,
+            disturbance_friction_scale=0.4,
+        )
+        low_penalty = FragileGraspSim(SimConfig(**base_cfg, disturbance_slip_penalty_scale=0.0))
+        high_penalty = FragileGraspSim(SimConfig(**base_cfg, disturbance_slip_penalty_scale=50.0))
+
+        low_reward = low_penalty._reward(state, contact, terminated=False, reason="running")
+        high_reward = high_penalty._reward(state, contact, terminated=False, reason="running")
+
+        self.assertLess(high_reward, low_reward - 0.5)
+
     def test_heuristic_can_lift_fragile_object(self) -> None:
         sim = FragileGraspSim()
         controller = HeuristicGripController()
@@ -99,7 +132,7 @@ class FragileGraspSimTest(unittest.TestCase):
         obs, _ = env.reset(seed=7)
 
         proprio_count = 4
-        force_count = 2
+        force_count = 1
         self.assertEqual(obs.shape[0], proprio_count + force_count)
 
 

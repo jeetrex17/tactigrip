@@ -31,7 +31,8 @@ def print_summary(name: str, summary: dict[str, float]) -> None:
         f"drop {pct(summary['drop_rate'])}  "
         f"crush {pct(summary['crush_rate'])}  "
         f"force {summary['mean_force_n']:5.2f} N  "
-        f"slip {summary['avg_slip_duration_s']:5.3f} s"
+        f"slip {summary['avg_slip_duration_s']:5.3f} s  "
+        f"peak slip {summary['mean_peak_slip_velocity_m_s']:6.4f} m/s"
     )
 
 
@@ -46,6 +47,7 @@ def run_policy_episode(
     disturbance_start_s: float | None,
     disturbance_duration_s: float,
     disturbance_friction_scale: float,
+    disturbance_slip_penalty_scale: float,
 ) -> EpisodeStats:
     env = FragileGraspEnv(
         modalities=modalities,
@@ -56,6 +58,7 @@ def run_policy_episode(
         disturbance_start_s=disturbance_start_s,
         disturbance_duration_s=disturbance_duration_s,
         disturbance_friction_scale=disturbance_friction_scale,
+        disturbance_slip_penalty_scale=disturbance_slip_penalty_scale,
         seed=seed,
     )
     obs, _ = env.reset(seed=seed, options={"object_name": object_name})
@@ -105,6 +108,7 @@ def main() -> None:
     parser.add_argument("--disturbance-start", type=float, default=None)
     parser.add_argument("--disturbance-duration", type=float, default=0.0)
     parser.add_argument("--disturbance-friction-scale", type=float, default=1.0)
+    parser.add_argument("--disturbance-slip-penalty", type=float, default=30.0)
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
 
@@ -128,6 +132,7 @@ def main() -> None:
             args.disturbance_start,
             args.disturbance_duration,
             args.disturbance_friction_scale,
+            args.disturbance_slip_penalty,
         )
         for idx in range(args.episodes)
     ]
@@ -145,6 +150,7 @@ def main() -> None:
         "disturbance_start_s": args.disturbance_start,
         "disturbance_duration_s": args.disturbance_duration,
         "disturbance_friction_scale": args.disturbance_friction_scale,
+        "disturbance_slip_penalty_scale": args.disturbance_slip_penalty,
         "aggregate": summarize(stats),
         "by_object": {name: summarize(items) for name, items in grouped.items()},
     }

@@ -16,7 +16,8 @@ from tactigrip.sim.gripper import FragileGraspSim, SimConfig
 
 
 MODALITIES = {
-    "force": ("normal_force_n", "shear_force_n"),
+    "force": ("normal_force_n",),
+    "force_shear": ("normal_force_n", "shear_force_n"),
     "force_acoustic": ("normal_force_n", "shear_force_n", "acoustic_energy"),
     "force_accel": (
         "normal_force_n",
@@ -64,6 +65,7 @@ class FragileGraspEnv(gym.Env):
         disturbance_start_s: float | None = None,
         disturbance_duration_s: float = 0.0,
         disturbance_friction_scale: float = 1.0,
+        disturbance_slip_penalty_scale: float = 30.0,
         seed: int | None = None,
     ) -> None:
         super().__init__()
@@ -80,6 +82,7 @@ class FragileGraspEnv(gym.Env):
             or disturbance_start_s is not None
             or disturbance_duration_s > 0.0
             or disturbance_friction_scale != 1.0
+            or disturbance_slip_penalty_scale != SimConfig.disturbance_slip_penalty_scale
         ):
             self.sim = FragileGraspSim(
                 SimConfig(
@@ -88,6 +91,7 @@ class FragileGraspEnv(gym.Env):
                     disturbance_start_s=disturbance_start_s,
                     disturbance_duration_s=disturbance_duration_s,
                     disturbance_friction_scale=disturbance_friction_scale,
+                    disturbance_slip_penalty_scale=disturbance_slip_penalty_scale,
                 )
             )
         else:
