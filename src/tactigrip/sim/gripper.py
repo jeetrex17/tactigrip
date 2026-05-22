@@ -37,6 +37,9 @@ class SimConfig:
     gravity_m_s2: float = 9.81
     force_penalty_scale: float = 0.015
     slip_penalty_scale: float = 8.0
+    disturbance_start_s: float | None = None
+    disturbance_duration_s: float = 0.0
+    disturbance_friction_scale: float = 1.0
 
 
 @dataclass
@@ -192,8 +195,12 @@ class FragileGraspSim:
         )
         contact = self._compute_contact(draft_state)
 
-        slip_distance = self.state.slip_distance_m + contact.slip_velocity_m_s * cfg.dt
-        object_height = max(0.0, lift_height - slip_distance)
+        if contact.in_contact:
+            slip_distance = self.state.slip_distance_m + contact.slip_velocity_m_s * cfg.dt
+            object_height = max(0.0, lift_height - slip_distance)
+        else:
+            slip_distance = self.state.slip_distance_m
+            object_height = 0.0
 
         crushed_time = self.state.crushed_time_s
         if contact.normal_force_n > self.object_profile.crush_force_n:
@@ -250,6 +257,7 @@ class FragileGraspSim:
     def _compute_contact(self, state: GripperState) -> ContactState:
         obj = self.object_profile
         cfg = self.config
+        friction = self._effective_friction(state.time_s)
         compression = max(0.0, obj.width_m - state.jaw_gap_m)
         in_contact = compression > 0.0
 
@@ -260,10 +268,10 @@ class FragileGraspSim:
             normal_force += cfg.contact_damping_n_s_m * closing_speed
 
         required_friction = obj.mass_kg * cfg.gravity_m_s2
-        available_friction = 2.0 * obj.friction * normal_force
+        available_friction = 2.0 * friction * normal_force
         slip_force = max(0.0, required_friction - available_friction)
         slip_velocity = slip_force / cfg.slip_damping_n_s_m if in_contact else 0.0
-        shear_force = min(required_friction / 2.0, obj.friction * normal_force)
+        shear_force = min(required_friction / 2.0, friction * normal_force)
 
         return ContactState(
             in_contact=in_contact,
@@ -278,6 +286,8 @@ class FragileGraspSim:
     def _termination_reason(self, state: GripperState, contact: ContactState) -> tuple[bool, str]:
         if state.crushed_time_s >= self.object_profile.crush_time_s:
             return True, "crushed"
+        if state.lift_height_m > 0.05 and not contact.in_contact:
+            return True, "dropped"
         if contact.in_contact and state.slip_distance_m >= self.config.drop_slip_m:
             return True, "dropped"
         if state.hold_time_s >= self.config.required_hold_s:
@@ -293,7 +303,25 @@ class FragileGraspSim:
     ) -> float:
         cfg = self.config
         reward = 1.5 * state.object_height_m
-        reward += 0.02 if contact.in_contact else -0.03
+        target_force = self._target_normal_force_n()
+
+        if contact.in_contact:
+            force_error = abs(contact.normal_force_n - target_force)
+            reward += 0.20
+            reward += 0.10 * min(contact.normal_force_n / max(target_force, 1e-6), 1.0)
+            reward -= 0.05 * force_error
+        else:
+            closing_range = max(1e-6, cfg.max_gap_m - self.object_profile.width_m)
+            approach = 1.0 - np.clip(
+                (state.jaw_gap_m - self.object_profile.width_m) / closing_range,
+                0.0,
+                1.0,
+            )
+            reward += 0.15 * approach
+            reward -= 0.03
+            if state.lift_height_m > 0.0:
+                reward -= 0.40
+
         reward -= cfg.force_penalty_scale * contact.normal_force_n
         reward -= cfg.slip_penalty_scale * contact.slip_velocity_m_s
 
@@ -308,3 +336,16 @@ class FragileGraspSim:
                 reward -= 18.0
         return float(reward)
 
+    def _target_normal_force_n(self) -> float:
+        obj = self.object_profile
+        needed = obj.mass_kg * self.config.gravity_m_s2 / max(2.0 * obj.friction, 1e-6)
+        return float(min(0.8 * obj.crush_force_n, 1.25 * needed + 0.20))
+
+    def _effective_friction(self, time_s: float) -> float:
+        cfg = self.config
+        if cfg.disturbance_start_s is None:
+            return self.object_profile.friction
+        disturbance_end = cfg.disturbance_start_s + cfg.disturbance_duration_s
+        if cfg.disturbance_start_s <= time_s <= disturbance_end:
+            return self.object_profile.friction * cfg.disturbance_friction_scale
+        return self.object_profile.friction

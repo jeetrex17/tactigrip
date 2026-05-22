@@ -12,7 +12,7 @@ except ImportError as exc:  # pragma: no cover - exercised when RL deps are abse
         "FragileGraspEnv requires gymnasium. Install with `pip install -r requirements.txt`."
     ) from exc
 
-from tactigrip.sim.gripper import FragileGraspSim
+from tactigrip.sim.gripper import FragileGraspSim, SimConfig
 
 
 MODALITIES = {
@@ -40,10 +40,10 @@ MODALITIES = {
 
 @dataclass(frozen=True)
 class ObservationScales:
+    time_s: float = 7.0
     jaw_gap_m: float = 0.085
     jaw_velocity_m_s: float = 0.045
     lift_height_m: float = 0.45
-    slip_distance_m: float = 0.03
     force_n: float = 10.0
     acoustic: float = 0.20
     accel_m_s2: float = 1.0
@@ -58,6 +58,12 @@ class FragileGraspEnv(gym.Env):
         modalities: str = "full",
         object_name: str = "fragile_foam",
         randomize_object: bool = False,
+        lift_start_s: float | None = None,
+        max_time_s: float | None = None,
+        max_target_force_n: float = 8.0,
+        disturbance_start_s: float | None = None,
+        disturbance_duration_s: float = 0.0,
+        disturbance_friction_scale: float = 1.0,
         seed: int | None = None,
     ) -> None:
         super().__init__()
@@ -67,7 +73,25 @@ class FragileGraspEnv(gym.Env):
         self.modalities = modalities
         self.object_name = object_name
         self.randomize_object = randomize_object
-        self.sim = FragileGraspSim()
+        self.max_target_force_n = max_target_force_n
+        if (
+            lift_start_s is not None
+            or max_time_s is not None
+            or disturbance_start_s is not None
+            or disturbance_duration_s > 0.0
+            or disturbance_friction_scale != 1.0
+        ):
+            self.sim = FragileGraspSim(
+                SimConfig(
+                    lift_start_s=lift_start_s if lift_start_s is not None else SimConfig.lift_start_s,
+                    max_time_s=max_time_s if max_time_s is not None else SimConfig.max_time_s,
+                    disturbance_start_s=disturbance_start_s,
+                    disturbance_duration_s=disturbance_duration_s,
+                    disturbance_friction_scale=disturbance_friction_scale,
+                )
+            )
+        else:
+            self.sim = FragileGraspSim()
         self.scales = ObservationScales()
         self._rng = np.random.default_rng(seed)
         self._last = self.sim.reset(seed=seed, object_name=object_name)
@@ -92,7 +116,8 @@ class FragileGraspEnv(gym.Env):
 
     def step(self, action):
         action_value = float(np.asarray(action, dtype=np.float32).reshape(-1)[0])
-        self._last = self.sim.step(action_value)
+        jaw_command = self._force_target_to_jaw_command(action_value)
+        self._last = self.sim.step(jaw_command)
         return (
             self._observation(self._last),
             self._last.reward,
@@ -101,22 +126,33 @@ class FragileGraspEnv(gym.Env):
             dict(self._last.info),
         )
 
+    @property
+    def last_result(self):
+        return self._last
+
+    def _force_target_to_jaw_command(self, action_value: float) -> float:
+        target_ratio = 0.5 * (float(np.clip(action_value, -1.0, 1.0)) + 1.0)
+        target_force_n = target_ratio * self.max_target_force_n
+
+        if target_force_n < 0.05:
+            return -1.0
+        if not self._last.contact.in_contact:
+            return 1.0
+
+        force_error = target_force_n - self._last.tactile.normal_force_n
+        return float(np.clip(0.45 * force_error, -1.0, 1.0))
+
     def _observation(self, result) -> np.ndarray:
         state = result.state
         contact = result.contact
         tactile = result.tactile
-        obj = self.sim.object_profile
         scales = self.scales
 
         values = [
+            state.time_s / scales.time_s,
             state.jaw_gap_m / scales.jaw_gap_m,
             state.jaw_velocity_m_s / scales.jaw_velocity_m_s,
             state.lift_height_m / scales.lift_height_m,
-            state.object_height_m / scales.lift_height_m,
-            state.slip_distance_m / scales.slip_distance_m,
-            float(contact.in_contact),
-            contact.available_friction_n / max(contact.required_friction_n, 1e-6),
-            obj.crush_force_n / scales.force_n,
         ]
 
         for name in MODALITIES[self.modalities]:
@@ -136,4 +172,3 @@ class FragileGraspEnv(gym.Env):
         if name == "temperature_c":
             return value / scales.temperature_c
         raise KeyError(name)
-

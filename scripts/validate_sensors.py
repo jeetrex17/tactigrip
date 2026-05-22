@@ -7,11 +7,11 @@ from pathlib import Path
 
 import numpy as np
 
-from tactigrip.sim.gripper import FragileGraspSim
+from tactigrip.sim.gripper import FragileGraspSim, SimConfig
 
 
 def run_validation(seed: int, output: Path, target_force_n: float) -> dict[str, float]:
-    sim = FragileGraspSim()
+    sim = FragileGraspSim(SimConfig(lift_start_s=3.0, max_time_s=7.0))
     result = sim.reset(seed=seed, object_name="fragile_foam")
     rows: list[dict[str, float | bool]] = []
 

@@ -12,6 +12,14 @@ def main() -> None:
     parser.add_argument("--modalities", choices=MODALITIES, default="full")
     parser.add_argument("--timesteps", type=int, default=200_000)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--object-name", default="fragile_foam")
+    parser.add_argument("--randomize-object", action="store_true")
+    parser.add_argument("--lift-start", type=float, default=None)
+    parser.add_argument("--max-time", type=float, default=None)
+    parser.add_argument("--max-target-force", type=float, default=8.0)
+    parser.add_argument("--disturbance-start", type=float, default=None)
+    parser.add_argument("--disturbance-duration", type=float, default=0.0)
+    parser.add_argument("--disturbance-friction-scale", type=float, default=1.0)
     parser.add_argument("--out-dir", type=Path, default=Path("models"))
     args = parser.parse_args()
 
@@ -27,7 +35,14 @@ def main() -> None:
     def make_env():
         env = FragileGraspEnv(
             modalities=args.modalities,
-            randomize_object=True,
+            object_name=args.object_name,
+            randomize_object=args.randomize_object,
+            lift_start_s=args.lift_start,
+            max_time_s=args.max_time,
+            max_target_force_n=args.max_target_force,
+            disturbance_start_s=args.disturbance_start,
+            disturbance_duration_s=args.disturbance_duration,
+            disturbance_friction_scale=args.disturbance_friction_scale,
             seed=args.seed,
         )
         return Monitor(env)
