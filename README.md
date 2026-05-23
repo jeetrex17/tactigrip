@@ -94,6 +94,15 @@ Benchmark the trained MuJoCo policy on its training object:
 uv run python scripts/benchmark_policies.py --backend mujoco --modalities full --objects slippery_plastic --episodes 60
 ```
 
+Current MuJoCo contact check for `models/ppo_mujoco_full.zip` on `slippery_plastic`:
+
+| Scenario | Success | Drops | Crushes |
+|---|---:|---:|---:|
+| clean | 100% | 0% | 0% |
+| friction scale 0.85 | 100% | 0% | 0% |
+| friction scale 0.70 | 70% | 30% | 0% |
+| friction scale 0.60 | 0% | 100% | 0% |
+
 ## Rerun Dashboard
 
 The Rerun viewer opens with a dashboard layout: gripper scene on the left and telemetry plots on the right.
@@ -114,3 +123,12 @@ uv run python scripts/visualize_rerun.py --policy models/ppo_full.zip --modaliti
 - Gymnasium/SB3 are used for PPO training.
 - Rerun is used for technical telemetry and gripper visualization.
 - Isaac Lab is a later port once a Linux + NVIDIA RTX machine is available.
+
+## Learning References
+
+- [Analog Devices: The Future of Tactile Sensing](https://www.analog.com/en/ai/the-future-of-tactile-sensing.html)
+- [A-SLIP: Acoustic Sensing for Robot Slip Perception](https://a-slip.github.io/)
+- [FlexiTac: An Open-Source Tactile Sensor](https://flexitac.github.io/)
+- [DeepMind: Opening up a Physics Simulator for Robotics](https://deepmind.google/blog/opening-up-a-physics-simulator-for-robotics/)
+- [The 37 Implementation Details of Proximal Policy Optimization](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/)
+- [MIT Robotic Manipulation](https://manipulation.mit.edu/)

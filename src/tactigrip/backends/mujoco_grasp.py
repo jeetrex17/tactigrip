@@ -222,7 +222,7 @@ class MuJoCoGraspSim:
 
         slip_distance = previous.slip_distance_m + contact.slip_velocity_m_s * cfg.dt
         lifted = state.object_height_m >= cfg.success_lift_m
-        stable = contact.in_contact and contact.slip_velocity_m_s < 0.004
+        stable = contact.in_contact and contact.slip_velocity_m_s < 0.012
         hold_time = previous.hold_time_s + cfg.dt if lifted and stable else 0.0
 
         state = replace(
@@ -378,9 +378,8 @@ class MuJoCoGraspSim:
     def _termination_reason(self, state: GripperState, contact: ContactState) -> tuple[bool, str]:
         if state.crushed_time_s >= self.object_profile.crush_time_s:
             return True, "crushed"
-        if state.lift_height_m > 0.04 and state.object_height_m < 0.015:
-            return True, "dropped"
-        if contact.in_contact and state.slip_distance_m >= self.config.drop_slip_m:
+        height_lag = state.lift_height_m - state.object_height_m
+        if state.lift_height_m > 0.04 and (state.object_height_m < 0.015 or height_lag > 0.12):
             return True, "dropped"
         if state.hold_time_s >= self.config.required_hold_s:
             return True, "success"
@@ -395,7 +394,7 @@ class MuJoCoGraspSim:
     ) -> float:
         cfg = self.config
         reward = 1.5 * state.object_height_m
-        target_force = self._target_normal_force_n()
+        target_force = self._target_normal_force_n(state.time_s)
         if contact.in_contact:
             reward += 0.2
             force_error = abs(contact.normal_force_n - target_force)
@@ -423,9 +422,10 @@ class MuJoCoGraspSim:
                 reward -= 18.0
         return float(reward)
 
-    def _target_normal_force_n(self) -> float:
+    def _target_normal_force_n(self, time_s: float | None = None) -> float:
         obj = self.object_profile
-        needed = obj.mass_kg * self.config.gravity_m_s2 / max(obj.friction, 1e-6)
+        friction = self._effective_friction(self.state.time_s if time_s is None else time_s)
+        needed = obj.mass_kg * self.config.gravity_m_s2 / max(friction, 1e-6)
         return float(min(0.80 * obj.crush_force_n, 1.25 * needed + 0.20))
 
     @property
