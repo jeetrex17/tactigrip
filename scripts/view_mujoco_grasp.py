@@ -26,7 +26,7 @@ def controller_action(sim: MuJoCoGraspSim, result) -> float:
 
 def make_sim(args) -> tuple[MuJoCoGraspSim, object]:
     config = SimConfig(
-        max_time_s=4.5,
+        max_time_s=6.0,
         lift_start_s=0.9,
         lift_speed_m_s=0.15,
         success_lift_m=0.26,

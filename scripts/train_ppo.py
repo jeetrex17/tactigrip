@@ -49,7 +49,7 @@ def main() -> None:
                 modalities=args.modalities,
                 object_name=args.object_name,
                 lift_start_s=args.lift_start if args.lift_start is not None else 0.9,
-                max_time_s=args.max_time if args.max_time is not None else 4.5,
+                max_time_s=args.max_time if args.max_time is not None else 6.0,
                 max_target_force_n=args.max_target_force,
                 disturbance_start_s=args.disturbance_start,
                 disturbance_duration_s=args.disturbance_duration,

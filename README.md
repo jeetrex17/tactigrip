@@ -82,6 +82,18 @@ Small MuJoCo PPO smoke runs use the same training entrypoint:
 uv run python scripts/train_ppo.py --backend mujoco --modalities full --timesteps 4096 --eval-freq 0
 ```
 
+Evaluate a MuJoCo policy:
+
+```bash
+uv run python scripts/evaluate_policy.py --backend mujoco --policy models/ppo_mujoco_full.zip --modalities full --objects slippery_plastic --episodes 30
+```
+
+Benchmark the trained MuJoCo policy on its training object:
+
+```bash
+uv run python scripts/benchmark_policies.py --backend mujoco --modalities full --objects slippery_plastic --episodes 60
+```
+
 ## Rerun Dashboard
 
 The Rerun viewer opens with a dashboard layout: gripper scene on the left and telemetry plots on the right.

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from tactigrip.envs.fragile_grasp_env import MODALITIES
 from tactigrip.policies import EpisodeStats, summarize
+from tactigrip.sim.gripper import default_objects
 
 from evaluate_policy import run_policy_episode
 
@@ -18,6 +19,7 @@ OBJECT_NAMES = ("fragile_foam", "slippery_plastic", "cool_metal")
 
 def evaluate_policy(
     policy_path: Path,
+    backend: str,
     modalities: str,
     episodes: int,
     seed: int,
@@ -28,6 +30,7 @@ def evaluate_policy(
     disturbance_duration_s: float,
     disturbance_friction_scale: float,
     disturbance_slip_penalty: float,
+    object_names: tuple[str, ...],
 ):
     from stable_baselines3 import PPO
 
@@ -39,7 +42,8 @@ def evaluate_policy(
                 model=model,
                 modalities=modalities,
                 seed=seed + idx,
-                object_name=OBJECT_NAMES[idx % len(OBJECT_NAMES)],
+                object_name=object_names[idx % len(object_names)],
+                backend=backend,
                 lift_start_s=lift_start_s,
                 max_time_s=max_time_s,
                 max_target_force_n=8.0,
@@ -68,7 +72,8 @@ def format_rate(value: float) -> str:
 
 def markdown_table(rows: list[dict]) -> str:
     lines = [
-        "| Policy | Scenario | Success | Drops | Crushes | Mean Force N | Slip Duration s | Peak Slip m/s |",
+        "| Policy | Scenario | Success | Drops | Crushes | Mean Force N | "
+        "Slip Duration s | Peak Slip m/s |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
@@ -88,24 +93,53 @@ def markdown_table(rows: list[dict]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate trained tactile policies across clean and stress scenarios.")
+    parser = argparse.ArgumentParser(
+        description="Evaluate trained tactile policies across clean and stress scenarios."
+    )
     parser.add_argument("--models-dir", type=Path, default=Path("models"))
-    parser.add_argument("--modalities", nargs="+", choices=sorted(MODALITIES), default=list(DEFAULT_MODALITIES))
+    parser.add_argument("--backend", choices=("fast", "mujoco"), default="fast")
+    parser.add_argument(
+        "--modalities",
+        nargs="+",
+        choices=sorted(MODALITIES),
+        default=list(DEFAULT_MODALITIES),
+    )
     parser.add_argument("--episodes", type=int, default=90)
+    parser.add_argument("--objects", nargs="+", choices=sorted(default_objects()), default=None)
     parser.add_argument("--seed", type=int, default=17)
-    parser.add_argument("--lift-start", type=float, default=2.0)
-    parser.add_argument("--max-time", type=float, default=7.0)
-    parser.add_argument("--disturbance-start", type=float, default=3.2)
-    parser.add_argument("--disturbance-duration", type=float, default=1.5)
+    parser.add_argument("--lift-start", type=float, default=None)
+    parser.add_argument("--max-time", type=float, default=None)
+    parser.add_argument("--disturbance-start", type=float, default=None)
+    parser.add_argument("--disturbance-duration", type=float, default=None)
     parser.add_argument("--disturbance-friction-scale", type=float, default=0.45)
     parser.add_argument("--disturbance-slip-penalty", type=float, default=30.0)
     parser.add_argument("--output-json", type=Path, default=Path("runs/policy_benchmark.json"))
     parser.add_argument("--output-md", type=Path, default=Path("runs/policy_benchmark.md"))
     args = parser.parse_args()
 
+    lift_start_s = args.lift_start
+    if lift_start_s is None:
+        lift_start_s = 0.9 if args.backend == "mujoco" else 2.0
+
+    max_time_s = args.max_time
+    if max_time_s is None:
+        max_time_s = 6.0 if args.backend == "mujoco" else 7.0
+    disturbance_start_s = (
+        args.disturbance_start
+        if args.disturbance_start is not None
+        else (1.8 if args.backend == "mujoco" else 3.2)
+    )
+    disturbance_duration_s = (
+        args.disturbance_duration
+        if args.disturbance_duration is not None
+        else (1.0 if args.backend == "mujoco" else 1.5)
+    )
+    object_names = tuple(args.objects or OBJECT_NAMES)
+
     rows: list[dict] = []
     for modalities in args.modalities:
-        policy_path = args.models_dir / f"ppo_{modalities}.zip"
+        prefix = "ppo_mujoco" if args.backend == "mujoco" else "ppo"
+        policy_path = args.models_dir / f"{prefix}_{modalities}.zip"
         if not policy_path.exists():
             print(f"skip missing policy: {policy_path}")
             continue
@@ -113,16 +147,18 @@ def main() -> None:
         for scenario, disturbance in (("clean", False), ("friction_drop", True)):
             summary = evaluate_policy(
                 policy_path=policy_path,
+                backend=args.backend,
                 modalities=modalities,
                 episodes=args.episodes,
                 seed=args.seed,
-                lift_start_s=args.lift_start,
-                max_time_s=args.max_time,
+                lift_start_s=lift_start_s,
+                max_time_s=max_time_s,
                 disturbance=disturbance,
-                disturbance_start_s=args.disturbance_start,
-                disturbance_duration_s=args.disturbance_duration,
+                disturbance_start_s=disturbance_start_s,
+                disturbance_duration_s=disturbance_duration_s,
                 disturbance_friction_scale=args.disturbance_friction_scale,
                 disturbance_slip_penalty=args.disturbance_slip_penalty,
+                object_names=object_names,
             )
             rows.append(
                 {
@@ -142,11 +178,13 @@ def main() -> None:
 
     report = {
         "episodes": args.episodes,
+        "backend": args.backend,
+        "objects": object_names,
         "seed": args.seed,
-        "lift_start_s": args.lift_start,
-        "max_time_s": args.max_time,
-        "disturbance_start_s": args.disturbance_start,
-        "disturbance_duration_s": args.disturbance_duration,
+        "lift_start_s": lift_start_s,
+        "max_time_s": max_time_s,
+        "disturbance_start_s": disturbance_start_s,
+        "disturbance_duration_s": disturbance_duration_s,
         "disturbance_friction_scale": args.disturbance_friction_scale,
         "disturbance_slip_penalty": args.disturbance_slip_penalty,
         "rows": rows,

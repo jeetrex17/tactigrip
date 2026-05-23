@@ -10,6 +10,7 @@ import numpy as np
 
 from tactigrip.envs.fragile_grasp_env import MODALITIES, FragileGraspEnv
 from tactigrip.policies import EpisodeStats, summarize
+from tactigrip.sim.gripper import default_objects
 
 
 def infer_modalities(path: Path) -> str:
@@ -41,6 +42,7 @@ def run_policy_episode(
     modalities: str,
     seed: int,
     object_name: str,
+    backend: str,
     lift_start_s: float | None,
     max_time_s: float | None,
     max_target_force_n: float,
@@ -49,18 +51,35 @@ def run_policy_episode(
     disturbance_friction_scale: float,
     disturbance_slip_penalty_scale: float,
 ) -> EpisodeStats:
-    env = FragileGraspEnv(
-        modalities=modalities,
-        object_name=object_name,
-        lift_start_s=lift_start_s,
-        max_time_s=max_time_s,
-        max_target_force_n=max_target_force_n,
-        disturbance_start_s=disturbance_start_s,
-        disturbance_duration_s=disturbance_duration_s,
-        disturbance_friction_scale=disturbance_friction_scale,
-        disturbance_slip_penalty_scale=disturbance_slip_penalty_scale,
-        seed=seed,
-    )
+    if backend == "mujoco":
+        from tactigrip.envs.mujoco_grasp_env import MuJoCoGraspEnv
+
+        env = MuJoCoGraspEnv(
+            modalities=modalities,
+            object_name=object_name,
+            lift_start_s=lift_start_s if lift_start_s is not None else 0.9,
+            max_time_s=max_time_s if max_time_s is not None else 6.0,
+            max_target_force_n=max_target_force_n,
+            disturbance_start_s=disturbance_start_s,
+            disturbance_duration_s=disturbance_duration_s,
+            disturbance_friction_scale=disturbance_friction_scale,
+            seed=seed,
+        )
+    elif backend == "fast":
+        env = FragileGraspEnv(
+            modalities=modalities,
+            object_name=object_name,
+            lift_start_s=lift_start_s,
+            max_time_s=max_time_s,
+            max_target_force_n=max_target_force_n,
+            disturbance_start_s=disturbance_start_s,
+            disturbance_duration_s=disturbance_duration_s,
+            disturbance_friction_scale=disturbance_friction_scale,
+            disturbance_slip_penalty_scale=disturbance_slip_penalty_scale,
+            seed=seed,
+        )
+    else:
+        raise ValueError(f"unknown backend '{backend}'")
     obs, _ = env.reset(seed=seed, options={"object_name": object_name})
 
     forces: list[float] = []
@@ -99,7 +118,9 @@ def run_policy_episode(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a trained PPO tactile gripper policy.")
     parser.add_argument("--policy", type=Path, default=Path("models/ppo_force.zip"))
+    parser.add_argument("--backend", choices=("fast", "mujoco"), default="fast")
     parser.add_argument("--modalities", choices=sorted(MODALITIES), default=None)
+    parser.add_argument("--objects", nargs="+", choices=sorted(default_objects()), default=None)
     parser.add_argument("--episodes", type=int, default=90)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--lift-start", type=float, default=None)
@@ -115,17 +136,20 @@ def main() -> None:
     try:
         from stable_baselines3 import PPO
     except ImportError as exc:
-        raise SystemExit("Install RL dependencies first: uv pip install -r requirements.txt") from exc
+        raise SystemExit(
+            "Install RL dependencies first: uv pip install -r requirements.txt"
+        ) from exc
 
     modalities = args.modalities or infer_modalities(args.policy)
     model = PPO.load(args.policy)
-    object_names = ("fragile_foam", "slippery_plastic", "cool_metal")
+    object_names = tuple(args.objects or ("fragile_foam", "slippery_plastic", "cool_metal"))
     stats = [
         run_policy_episode(
             model,
             modalities,
             args.seed + idx,
             object_names[idx % len(object_names)],
+            args.backend,
             args.lift_start,
             args.max_time,
             args.max_target_force,
@@ -143,7 +167,9 @@ def main() -> None:
 
     report = {
         "policy": str(args.policy),
+        "backend": args.backend,
         "modalities": modalities,
+        "objects": object_names,
         "lift_start_s": args.lift_start,
         "max_time_s": args.max_time,
         "max_target_force_n": args.max_target_force,
@@ -155,13 +181,14 @@ def main() -> None:
         "by_object": {name: summarize(items) for name, items in grouped.items()},
     }
 
-    output = args.output or Path(f"runs/policy_eval_{modalities}.json")
+    output = args.output or Path(f"runs/policy_eval_{args.backend}_{modalities}.json")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2) + "\n")
 
     print("PPO policy")
     print("----------")
     print(f"policy:     {args.policy}")
+    print(f"backend:    {args.backend}")
     print(f"modalities: {modalities}")
     print_summary("aggregate", report["aggregate"])
     for name in sorted(report["by_object"]):

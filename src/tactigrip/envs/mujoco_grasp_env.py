@@ -23,7 +23,7 @@ class MuJoCoGraspEnv(gym.Env):
         modalities: str = "full",
         object_name: str = "fragile_foam",
         lift_start_s: float = 0.9,
-        max_time_s: float = 4.5,
+        max_time_s: float = 6.0,
         max_target_force_n: float = 8.0,
         disturbance_start_s: float | None = None,
         disturbance_duration_s: float = 0.0,
@@ -85,10 +85,10 @@ class MuJoCoGraspEnv(gym.Env):
         target_ratio = 0.5 * (float(np.clip(action_value, -1.0, 1.0)) + 1.0)
         target_force_n = target_ratio * self.max_target_force_n
 
-        if target_force_n < 0.05:
-            return -1.0
         if not self._last.contact.in_contact:
             return 1.0
+        if target_force_n < 0.05:
+            return -1.0
 
         force_error = target_force_n - self._last.tactile.normal_force_n
         return float(np.clip(0.20 * force_error, -1.0, 1.0))

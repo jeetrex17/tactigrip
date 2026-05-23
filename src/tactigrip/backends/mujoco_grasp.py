@@ -126,7 +126,7 @@ class MuJoCoGraspSim:
         sensor_model: TactileSensorModel | None = None,
         substeps: int = 10,
     ) -> None:
-        self.config = config or SimConfig(max_time_s=4.5, lift_start_s=0.9, lift_speed_m_s=0.15)
+        self.config = config or SimConfig(max_time_s=6.0, lift_start_s=0.9, lift_speed_m_s=0.15)
         self.sensor_model = sensor_model or TactileSensorModel()
         self.objects = default_objects()
         self.object_profile = self.objects["fragile_foam"]
@@ -393,13 +393,27 @@ class MuJoCoGraspSim:
         terminated: bool,
         reason: str,
     ) -> float:
+        cfg = self.config
         reward = 1.5 * state.object_height_m
+        target_force = self._target_normal_force_n()
         if contact.in_contact:
             reward += 0.2
+            force_error = abs(contact.normal_force_n - target_force)
+            reward += 0.10 * min(contact.normal_force_n / max(target_force, 1e-6), 1.0)
+            reward -= 0.04 * force_error
             reward -= 0.015 * contact.normal_force_n
             reward -= 8.0 * contact.slip_velocity_m_s
         else:
+            closing_range = max(1e-6, cfg.max_gap_m - self.object_profile.width_m)
+            approach = 1.0 - np.clip(
+                (state.jaw_gap_m - self.object_profile.width_m) / closing_range,
+                0.0,
+                1.0,
+            )
+            reward += 0.35 * approach
             reward -= 0.03
+            if state.lift_height_m > 0.0:
+                reward -= 0.75
         if terminated:
             if reason == "success":
                 reward += 20.0
@@ -456,7 +470,7 @@ def run_scripted_mujoco_episode(
     disturbance: bool = False,
 ) -> tuple[StepResult, dict[str, float | bool | str]]:
     config = SimConfig(
-        max_time_s=4.5,
+        max_time_s=6.0,
         lift_start_s=0.9,
         lift_speed_m_s=0.15,
         success_lift_m=0.26,
