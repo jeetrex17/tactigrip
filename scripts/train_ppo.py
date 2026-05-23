@@ -11,6 +11,7 @@ MODALITIES = ("force", "force_shear", "force_accel", "force_acoustic", "force_te
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train PPO on the tactile grasp-lift-hold task.")
     parser.add_argument("--modalities", choices=MODALITIES, default="full")
+    parser.add_argument("--backend", choices=("fast", "mujoco"), default="fast")
     parser.add_argument("--timesteps", type=int, default=200_000)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--object-name", default="fragile_foam")
@@ -39,19 +40,36 @@ def main() -> None:
         raise SystemExit("Install RL dependencies first: pip install -r requirements.txt") from exc
 
     def make_env():
-        env = FragileGraspEnv(
-            modalities=args.modalities,
-            object_name=args.object_name,
-            randomize_object=args.randomize_object,
-            lift_start_s=args.lift_start,
-            max_time_s=args.max_time,
-            max_target_force_n=args.max_target_force,
-            disturbance_start_s=args.disturbance_start,
-            disturbance_duration_s=args.disturbance_duration,
-            disturbance_friction_scale=args.disturbance_friction_scale,
-            disturbance_slip_penalty_scale=args.disturbance_slip_penalty,
-            seed=args.seed,
-        )
+        if args.backend == "mujoco":
+            from tactigrip.envs.mujoco_grasp_env import MuJoCoGraspEnv
+
+            if args.randomize_object:
+                raise SystemExit("--randomize-object is not supported by the MuJoCo backend yet")
+            env = MuJoCoGraspEnv(
+                modalities=args.modalities,
+                object_name=args.object_name,
+                lift_start_s=args.lift_start if args.lift_start is not None else 0.9,
+                max_time_s=args.max_time if args.max_time is not None else 4.5,
+                max_target_force_n=args.max_target_force,
+                disturbance_start_s=args.disturbance_start,
+                disturbance_duration_s=args.disturbance_duration,
+                disturbance_friction_scale=args.disturbance_friction_scale,
+                seed=args.seed,
+            )
+        else:
+            env = FragileGraspEnv(
+                modalities=args.modalities,
+                object_name=args.object_name,
+                randomize_object=args.randomize_object,
+                lift_start_s=args.lift_start,
+                max_time_s=args.max_time,
+                max_target_force_n=args.max_target_force,
+                disturbance_start_s=args.disturbance_start,
+                disturbance_duration_s=args.disturbance_duration,
+                disturbance_friction_scale=args.disturbance_friction_scale,
+                disturbance_slip_penalty_scale=args.disturbance_slip_penalty,
+                seed=args.seed,
+            )
         return Monitor(env)
 
     env = DummyVecEnv([make_env])
@@ -72,9 +90,13 @@ def main() -> None:
     )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    output = args.out_dir / f"ppo_{args.modalities}"
+    output = args.out_dir / (
+        f"ppo_mujoco_{args.modalities}" if args.backend == "mujoco" else f"ppo_{args.modalities}"
+    )
     callback = None
-    best_dir = args.out_dir / f"best_{args.modalities}"
+    best_dir = args.out_dir / (
+        f"best_mujoco_{args.modalities}" if args.backend == "mujoco" else f"best_{args.modalities}"
+    )
     if args.eval_freq > 0:
         callback = EvalCallback(
             eval_env,

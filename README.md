@@ -46,6 +46,42 @@ Run the policy ablation:
 uv run python scripts/benchmark_policies.py --episodes 120
 ```
 
+## MuJoCo Contact Backend
+
+The custom simulator is the fast benchmark backend. A MuJoCo backend is included for real rigid-body contact checks with the same object profiles and tactile sensor model.
+
+```bash
+uv run python scripts/run_mujoco_grasp.py --object slippery_plastic --seed 5
+```
+
+Watch the same grasp in the native MuJoCo viewer:
+
+```bash
+.venv-mj/bin/mjpython scripts/view_mujoco_grasp.py --object slippery_plastic --seed 5
+```
+
+Use `--slowdown 8` for slower playback.
+
+Use `--show-contacts` only when debugging MuJoCo contact points and force markers.
+
+If you are already inside the `.venv-mj` environment:
+
+```bash
+mjpython scripts/view_mujoco_grasp.py --object slippery_plastic --seed 5 --slowdown 8 --show-ui
+```
+
+Stress the grasp with a temporary friction drop:
+
+```bash
+uv run python scripts/run_mujoco_grasp.py --object slippery_plastic --seed 5 --disturbance
+```
+
+Small MuJoCo PPO smoke runs use the same training entrypoint:
+
+```bash
+uv run python scripts/train_ppo.py --backend mujoco --modalities full --timesteps 4096 --eval-freq 0
+```
+
 ## Rerun Dashboard
 
 The Rerun viewer opens with a dashboard layout: gripper scene on the left and telemetry plots on the right.
